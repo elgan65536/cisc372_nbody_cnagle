@@ -12,7 +12,7 @@ __global__ void compute_accel(vector3* values, vector3** accels, vector3* dVel, 
 	if (x >= NUMENTITIES || y >= NUMENTITIES) {
 		return;
 	}
-	if (x == 0) {
+	if (y == 0) {
 		accels[x] = &values[x * NUMENTITIES];
 	}
 	__syncthreads();
@@ -29,8 +29,6 @@ __global__ void compute_accel(vector3* values, vector3** accels, vector3* dVel, 
 		double accelmag = -1 * GRAV_CONSTANT * dMass[y] / magnitude_sq;
 		FILL_VECTOR(accels[x][y], accelmag * distance[0] / magnitude, accelmag * distance[1] / magnitude, accelmag * distance[2] / magnitude);
 	}
-	dPos[x][0] = 1000000000.0;
-
 }
 
 __global__ void add_accel(vector3* values, vector3** accels, vector3* dVel, vector3* dPos, double* dMass) {
@@ -51,7 +49,6 @@ __global__ void add_accel(vector3* values, vector3** accels, vector3* dVel, vect
 		dVel[x][k] += accel_sum[k] * INTERVAL;
 		dPos[x][k] = dVel[x][k] * INTERVAL;
 	}
-	dPos[x][0] = 1000000000.0;
 }
 
 void compute() {
@@ -61,9 +58,7 @@ void compute() {
 	vector3* dValue;
 	vector3** dAccel;
 
-	int e = 0;
-
-	e+=cudaMallocManaged(&dVel, (sizeof(vector3) * NUMENTITIES));
+	cudaMallocManaged(&dVel, (sizeof(vector3) * NUMENTITIES));
 	cudaMallocManaged(&dPos, (sizeof(vector3) * NUMENTITIES));
 	cudaMallocManaged(&dMass, (sizeof(double) * NUMENTITIES));
 
@@ -96,9 +91,4 @@ void compute() {
 	cudaFree(dPos);
 	cudaFree(dValue);
 	cudaFree(dAccel);
-
-	if (e) {
-		printf("%d\n", e);
-	exit(0);
-	}
 }
