@@ -33,21 +33,28 @@ __global__ void compute_accel(vector3* values, vector3** accels, vector3* dVel, 
 
 __global__ void add_accel(vector3* values, vector3** accels, vector3* dVel, vector3* dPos, double* dMass) {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	if (x >= NUMENTITIES) {
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int z = threadIdx.z;
+	if (x >= NUMENTITIES || y >= NUMENTITIES) {
 		return;
 	}
-	vector3 accel_sum = {0, 0, 0};
-	int j, k;
-	for (j = 0; j < NUMENTITIES; j++) {
-		for (k = 0; k < 3; k++) {
-			accel_sum[k] += accels[x][j][k];
+	int j;
+	int a = y;
+	//binary reduction
+	for (j = 1; j < NUMENTITIES; j <<= 1) {
+		if (a % 2 == 0 && y + j < NUMENTITIES) {
+			a >>= 1;
+			accels[x][y][z] += accels[x][y + j][z];
+		} else {
+			return;
 		}
+		__syncthreads();
 	}
 	//compute the new velocity based on the acceleration and time interval
 	//compute the new position based on the velocity and time interval
-	for (k = 0; k < 3; k++) {
-		dVel[x][k] += accel_sum[k] * INTERVAL;
-		dPos[x][k] = dVel[x][k] * INTERVAL;
+	if (y == 0) {
+		dVel[x][z] += accels[x][0][z] * INTERVAL;
+		dPos[x][z] = dVel[x][z] * INTERVAL;
 	}
 }
 
@@ -62,23 +69,25 @@ void compute() {
 	cudaMallocManaged(&dPos, (sizeof(vector3) * NUMENTITIES));
 	cudaMallocManaged(&dMass, (sizeof(double) * NUMENTITIES));
 
-	//Copy memory from the host onto the GPU
 	cudaMemcpy(dVel, hVel, sizeof(vector3) * NUMENTITIES, cudaMemcpyHostToDevice);
 	cudaMemcpy(dPos, hPos, sizeof(vector3) * NUMENTITIES, cudaMemcpyHostToDevice);
 	cudaMemcpy(dMass, mass, sizeof(double) * NUMENTITIES, cudaMemcpyHostToDevice);
 
-	//Allocate space on the GPU for these variables
 	cudaMallocManaged(&dValue, sizeof(vector3) * NUMENTITIES * NUMENTITIES);
 	cudaMallocManaged(&dAccel, sizeof(vector3*) * NUMENTITIES);
 
-	//Determine number of blocks that we should be running
+	//using 16x16 (256) threadblocks for matrix construction
 	dim3 threadsPerBlock(16, 16, 1);
 	dim3 numBlocks((NUMENTITIES + 15) / 16, (NUMENTITIES + 15) / 16, 1);
 
 	compute_accel<<<numBlocks, threadsPerBlock>>>(dValue, dAccel, dVel, dPos, dMass);
 	cudaDeviceSynchronize();
 
-	add_accel<<<(NUMENTITIES + 15) / 16, 16>>>(dValue, dAccel, dVel, dPos, dMass);
+	//use 16x16x3 (768) threadblocks to also parallelize over individual components
+	dim3 threadsPerBlock2(16, 16, 3);
+	dim3 numBlocks2((NUMENTITIES + 15) / 16, (NUMENTITIES + 15) / 16, 1);
+
+	add_accel<<<numBlocks2, threadsPerBlock2>>>(dValue, dAccel, dVel, dPos, dMass);
 	cudaDeviceSynchronize();
 
 	//Copy the results back to the device
